@@ -12,8 +12,8 @@ example.
 
 from rlpyt.samplers.serial.sampler import SerialSampler
 from rlpyt.envs.gym import make as gym_make
-from rlpyt.algos.qpg.sac import SAC
-from rlpyt.agents.qpg.sac_agent import SacAgent
+from rlpyt.algos.mb.gp_mlp import GP_Mlp
+from rlpyt.agents.mb.gp_mlp_agent import GP_MlpAgent
 from rlpyt.runners.minibatch_rl import MinibatchRlEval
 from rlpyt.utils.logging.context import logger_context
 
@@ -30,18 +30,23 @@ def build_and_train(env_id="Hopper-v3", run_ID=0, cuda_idx=None):
         eval_max_steps=int(51e3),
         eval_max_trajectories=50,
     )
-    algo = SAC()  # Run with defaults.
-    agent = SacAgent()
+    # The cost function for InvertedPendulumBulletEnv
+    def obs_cost_fn(x):
+        target = np.array([0,0,1,0,0])
+        c = (x - target)**2
+        return c
+    algo = GP_Mlp(obs_cost_fn=obs_cost_fn)  # Run with defaults.
+    agent = GP_MlpAgent()
     runner = MinibatchRlEval(
         algo=algo,
         agent=agent,
         sampler=sampler,
         n_steps=1e6,
-        log_interval_steps=1e4,
+        log_interval_steps=5e1,
         affinity=dict(cuda_idx=cuda_idx),
     )
     config = dict(env_id=env_id)
-    name = "sac_" + env_id
+    name = "gp_mlp_" + env_id
     log_dir = "example_1"
     with logger_context(log_dir, run_ID, name, config):
         runner.train()

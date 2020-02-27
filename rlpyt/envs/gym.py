@@ -1,6 +1,7 @@
 
 import numpy as np
 import gym
+import pybullet_envs
 from gym import Wrapper
 from gym.wrappers.time_limit import TimeLimit
 from collections import namedtuple
