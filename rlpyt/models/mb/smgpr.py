@@ -1,6 +1,7 @@
 
 import numpy as np
 import torch
+import gpytorch
 
 from rlpyt.utils.tensor import infer_leading_dims, restore_leading_dims
 from rlpyt.models.smgpr import MultitaskGPModel
@@ -26,13 +27,22 @@ class GPDynamicsModel(torch.nn.Module):
         self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(
             num_tasks=int(np.prod(observation_shape)))
         self.mml = gpytorch.mlls.VariationalELBO(
-            self.likelihood, self.gp, num_data=int(np.prod(observation_shape)))
+            self.likelihood, self.gp, num_data=1e4)
     def forward(self, observation, prev_action, prev_reward, action):
         lead_dim, T, B, _ = infer_leading_dims(observation,
             self._obs_ndim)
         gp_input = torch.cat(
             [observation.view(T * B, -1), action.view(T * B, -1)], dim=1)
-        gp = self.likelihood(self.gp(gp_input)).rsample().squeeze(-1)
+        with gpytorch.settings.fast_pred_var():
+            gp = self.likelihood(self.gp(gp_input)).rsample().squeeze(-1)
         gp = restore_leading_dims(gp, lead_dim, T, B)
         return gp
 
+    def predict_for_train(self, observation, prev_action, prev_reward, action):
+        lead_dim, T, B, _ = infer_leading_dims(observation,
+            self._obs_ndim)
+        gp_input = torch.cat(
+            [observation.view(T * B, -1), action.view(T * B, -1)], dim=1)
+        gp = self.gp(gp_input)
+        # gp = restore_leading_dims(gp, lead_dim, T, B)
+        return gp

@@ -16,6 +16,7 @@ from rlpyt.algos.mb.gp_mlp import GP_Mlp
 from rlpyt.agents.mb.gp_mlp_agent import GP_MlpAgent
 from rlpyt.runners.minibatch_rl import MinibatchRlEval
 from rlpyt.utils.logging.context import logger_context
+import torch
 
 
 def build_and_train(env_id="Hopper-v3", run_ID=0, cuda_idx=None):
@@ -23,18 +24,19 @@ def build_and_train(env_id="Hopper-v3", run_ID=0, cuda_idx=None):
         EnvCls=gym_make,
         env_kwargs=dict(id=env_id),
         eval_env_kwargs=dict(id=env_id),
-        batch_T=1,  # One time-step per sampler iteration.
+        batch_T=20,  # One time-step per sampler iteration.
         batch_B=1,  # One environment (i.e. sampler Batch dimension).
         max_decorrelation_steps=0,
-        eval_n_envs=10,
+        eval_n_envs=2,
         eval_max_steps=int(51e3),
-        eval_max_trajectories=50,
+        eval_max_trajectories=200,
     )
     # The cost function for InvertedPendulumBulletEnv
     def obs_cost_fn(x):
-        target = np.array([0,0,1,0,0])
+        target = torch.FloatTensor([0,0,1,0,0])
         c = (x - target)**2
-        return c
+        c = -c.sum(dim=1)
+        return -c.exp()
     algo = GP_Mlp(obs_cost_fn=obs_cost_fn)  # Run with defaults.
     agent = GP_MlpAgent()
     runner = MinibatchRlEval(
@@ -42,7 +44,7 @@ def build_and_train(env_id="Hopper-v3", run_ID=0, cuda_idx=None):
         agent=agent,
         sampler=sampler,
         n_steps=1e6,
-        log_interval_steps=5e1,
+        log_interval_steps=100,
         affinity=dict(cuda_idx=cuda_idx),
     )
     config = dict(env_id=env_id)

@@ -1,4 +1,3 @@
-
 import torch
 from collections import namedtuple
 
@@ -10,13 +9,13 @@ from rlpyt.replays.non_sequence.uniform import (UniformReplayBuffer,
 from rlpyt.replays.non_sequence.time_limit import (TlUniformReplayBuffer,
     AsyncTlUniformReplayBuffer)
 from rlpyt.utils.collections import namedarraytuple
+from rlpyt.agents.base import AgentInputs
 from rlpyt.utils.tensor import valid_mean
+from rlpyt.utils.visom import VisdomLinePlotter
 from rlpyt.algos.utils import valid_from_done
 
 OptInfo = namedtuple("OptInfo",
     ["muLoss", "dLoss", "muGradNorm", "dGradNorm"])
-SamplesToBuffer = namedarraytuple("SamplesToBuffer",
-    ["observation", "action", "reward", "done", "timeout"])
 
 
 class GP_Mlp(RlAlgorithm):
@@ -31,8 +30,8 @@ class GP_Mlp(RlAlgorithm):
             batch_size=64,
             min_steps_learn=int(1e1), # very efficient
             target_update_tau=0.01,
-            target_update_interval=1,
-            policy_update_interval=1,
+            target_update_interval=10,
+            policy_update_interval=10,
             learning_rate=1e-4,
             d_learning_rate=1e-2,
             OptimCls=torch.optim.Adam,
@@ -64,6 +63,7 @@ class GP_Mlp(RlAlgorithm):
         self.min_itr_learn = int(self.min_steps_learn // sampler_bs)
         # Agent give min itr learn.?
         self.optim_initialize(rank)
+        self.initialize_visom()
 
     def async_initialize(self, agent, sampler_n_itr, batch_spec, mid_batch_reset,
             examples, world_size=1):
@@ -82,11 +82,14 @@ class GP_Mlp(RlAlgorithm):
         self.rank = rank
         self.mu_optimizer = self.OptimCls(self.agent.mu_parameters(),
             lr=self.learning_rate, **self.optim_kwargs)
-        self.d_optimizer = self.OptimCls(self.agent.q_parameters(),
+        self.d_optimizer = self.OptimCls(self.agent.d_parameters(),
             lr=self.d_learning_rate, **self.optim_kwargs)
         if self.initial_optim_state_dict is not None:
             self.d_optimizer.load_state_dict(self.initial_optim_state_dict["d"])
             self.mu_optimizer.load_state_dict(self.initial_optim_state_dict["mu"])
+
+    def initialize_visom(self):
+        self.plotter = VisdomLinePlotter(env_name='main')
 
 
     def optimize_agent(self, itr, samples=None, sampler_itr=None):
@@ -97,28 +100,29 @@ class GP_Mlp(RlAlgorithm):
         ratio, sampler batch size, and training batch size).
         """
         itr = itr if sampler_itr is None else sampler_itr  # Async uses sampler_itr.
-        if samples is not None:
-            samples = self.samples_to_buffer(samples)
         opt_info = OptInfo(*([] for _ in range(len(OptInfo._fields))))
         if itr < self.min_itr_learn:
             return opt_info
         for _ in range(self.updates_per_optimize):
             if self.mid_batch_reset and not self.agent.recurrent:
-                valid = torch.ones_like(samples.done, dtype=torch.float)
+                valid = torch.ones_like(samples.env.done, dtype=torch.float)
             else:
                 valid = valid_from_done(samples.done)
             if self.bootstrap_timelimit:
                 # To avoid non-use of bootstrap when environment is 'done' due to
                 # time-limit, turn off training on these samples.
-                valid *= (1 - samples.timeout_n.float())
-            self.d_optimizer.zero_grad()
-            d_loss = self.q_loss(samples, valid)
-            d_loss.backward()
-            d_grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.agent.d_parameters(), self.clip_grad_norm)
-            self.d_optimizer.step()
-            opt_info.dLoss.append(d_loss.item())
-            opt_info.dGradNorm.append(d_grad_norm)
+                valid *= (1 - getattr(samples.env.env_info, "timeout", None).float())
+            optimizing_model_iter = 20
+            for _ in range(optimizing_model_iter):
+                self.d_optimizer.zero_grad()
+                d_loss = self.d_loss(samples, valid)
+                d_loss.backward()
+                d_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    self.agent.d_parameters(), self.clip_grad_norm)
+                self.d_optimizer.step()
+                opt_info.dLoss.append(d_loss.item())
+                opt_info.dGradNorm.append(d_grad_norm)
+
             self.update_counter += 1
             if self.update_counter % self.policy_update_interval == 0:
                 self.mu_optimizer.zero_grad()
@@ -133,39 +137,54 @@ class GP_Mlp(RlAlgorithm):
                 self.agent.update_target(self.target_update_tau)
         return opt_info
 
-    def samples_to_buffer(self, samples):
-        """Defines how to add data from sampler into the replay buffer. Called
-        in optimize_agent() if samples are provided to that method."""
-        return SamplesToBuffer(
-            observation=samples.env.observation,
-            action=samples.agent.action,
-            reward=samples.env.reward,
-            done=samples.env.done,
-            timeout=getattr(samples.env.env_info, "timeout", None)
-        )
 
     def mu_loss(self, samples, valid):
         """Computes the mu_loss by rolling out from s_0."""
-        mu_losses = torch.zeros_like(*samples.agent_inputs)
-        for i, obs in enumerate(*samples.agent_inputs):
-            next_obs = obs
-            T = 40
-            for _ in range(T):
-                next_obs = self.agent.predict_next_obs_at_mu(next_obs)
-                mu_losses[i] += self.obs_cost_fn(next_obs)
+        T = 40
+        mu_loss = 0
+        n_obs_dim = samples.env.observation.size(-1)
+        n_samples = samples.env.observation.size(0)
+        for dim in range(n_obs_dim):
+            self.plotter.plot('dim='+str(dim), 'true',
+                              'Model Multi-Step Prediction dim='+str(dim),
+                              range(n_samples-1),
+                              samples.env.observation[1:, 0, dim].data.numpy(), update='replace')
+            self.plotter.plot('dim='+str(dim), 'predict',
+                              'Model Multi-Step Prediction dim='+str(dim), [0], [0], update='replace')
+        next_obs = samples.env.observation[0, :, :]
+        prev_action = samples.agent.prev_action[0, :, :]
+        prev_reward = samples.env.prev_reward[0, :]
+        for t in range(T):
+            next_obs = self.agent.predict_next_obs_at_mu(
+                next_obs, prev_action, prev_reward)
+            mu_loss += self.obs_cost_fn(next_obs)
 
-            mu_losses[i] /= T
+            for dim in range(n_obs_dim):
+                self.plotter.plot('dim='+str(dim), 'predict',
+                                  'Model Multi-Step Prediction dim='+str(dim), [t], next_obs[:, dim].data.numpy(), update='append')
 
-        mu_loss = valid_mean(mu_losses, valid)  # valid can be None.
-        return -mu_loss
+        return mu_loss
 
     def d_loss(self, samples, valid):
         """Constructs the prediction loss Input samples have leading batch dimension [B,..] (but not time)."""
-        next_obs = self.agent.predict_next_obs(*samples.agent_inputs, samples.action)
-        next_obs = torch.clamp(
-            next_obs, -samples.env.observation_space.high, samples.env.observation_space.high)
-        d_losses = -self.agent.d_model.mml(next_obs[:,-1],*samples.agent_inputs[1:])
-        d_loss = valid_mean(d_losses, valid)  # valid can be None.
+        assert(samples.env.observation.size(0) > 1)
+        agent_inputs = AgentInputs(
+            observation=samples.env.observation,
+            prev_action=samples.agent.prev_action,
+            prev_reward=samples.env.prev_reward,
+        )
+
+        # only predict 1:n-1
+        pred_obs_delta = self.agent.predict_obs_delta(
+            agent_inputs.observation[:-1, :, :],
+            agent_inputs.prev_action[:-1, :, :],
+            agent_inputs.prev_reward[:-1, :],
+            samples.agent.action[:-1, :, :])
+        obs_delta = agent_inputs.observation[1:,:,:] - agent_inputs.observation[:-1,:,:]
+        # next_obs = torch.clamp(
+        #     next_obs, -samples.env.observation_space.high, samples.env.observation_space.high)
+        d_losses = -self.agent.d_model.mml(pred_obs_delta, obs_delta)
+        d_loss = valid_mean(d_losses, valid)
         return d_loss
 
     def optim_state_dict(self):

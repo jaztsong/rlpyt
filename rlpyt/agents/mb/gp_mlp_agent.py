@@ -37,7 +37,7 @@ class GP_MlpAgent(BaseAgent):
         if model_kwargs is None:
             model_kwargs = dict(hidden_sizes=[50, 40])
         if d_model_kwargs is None:
-            d_model_kwargs = dict(num_incuding_pts=50)
+            d_model_kwargs = dict(num_inducing_pts=50)
         save__init__args(locals())
         super().__init__()  # For async setup.
 
@@ -81,12 +81,12 @@ class GP_MlpAgent(BaseAgent):
             action_size=env_spaces.action.shape[0],
         )
 
-    def predict_next_obs(self, observation, prev_action, prev_reward, action):
+    def predict_obs_delta(self, observation, prev_action, prev_reward, action):
         """Compute the next state for input state/observation and action (with grad)."""
         model_inputs = buffer_to((observation, prev_action, prev_reward,
             action), device=self.device)
-        next_obs = self.d_model(*model_inputs) + observation
-        return next_obs.cpu()
+        predict_obs_delta = self.d_model.predict_for_train(*model_inputs)
+        return predict_obs_delta
 
     def predict_next_obs_at_mu(self, observation, prev_action, prev_reward):
         """Compute Q-value for input state/observation, through the mu_model
@@ -94,7 +94,8 @@ class GP_MlpAgent(BaseAgent):
         model_inputs = buffer_to((observation, prev_action, prev_reward),
             device=self.device)
         mu = self.model(*model_inputs)
-        next_obs = self.d_model(*model_inputs, mu) + observation
+        next_obs = self.d_model(
+            *model_inputs, mu) + observation
         return next_obs.cpu()
 
     @torch.no_grad()
@@ -113,7 +114,7 @@ class GP_MlpAgent(BaseAgent):
         update_state_dict(self.target_model, self.model.state_dict(), tau)
 
     def d_parameters(self):
-        return self.q_model.parameters()
+        return self.d_model.parameters()
 
     def mu_parameters(self):
         return self.model.parameters()
