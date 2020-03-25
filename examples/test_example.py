@@ -24,7 +24,7 @@ def build_and_train(env_id="Hopper-v3", run_ID=0, cuda_idx=None):
         EnvCls=gym_make,
         env_kwargs=dict(id=env_id),
         eval_env_kwargs=dict(id=env_id),
-        batch_T=20,  # One time-step per sampler iteration.
+        batch_T=50,  # One time-step per sampler iteration.
         batch_B=1,  # One environment (i.e. sampler Batch dimension).
         max_decorrelation_steps=0,
         eval_n_envs=2,
@@ -44,7 +44,7 @@ def build_and_train(env_id="Hopper-v3", run_ID=0, cuda_idx=None):
         agent=agent,
         sampler=sampler,
         n_steps=1e6,
-        log_interval_steps=100,
+        log_interval_steps=200,
         affinity=dict(cuda_idx=cuda_idx),
     )
     config = dict(env_id=env_id)

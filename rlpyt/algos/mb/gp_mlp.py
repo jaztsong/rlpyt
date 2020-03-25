@@ -26,7 +26,7 @@ class GP_Mlp(RlAlgorithm):
     def __init__(
             self,
             discount=0.99,
-            batch_size=5e3,
+            batch_size=5e2,
             buffer_size=int(1e6),
             min_steps_learn=int(1e1), # very efficient
             target_update_tau=0.01,
@@ -63,7 +63,7 @@ class GP_Mlp(RlAlgorithm):
         # Agent give min itr learn.?
         self.optim_initialize(rank)
         self.initialize_buffer(examples,batch_spec)
-        self.initialize_visom()
+        # self.initialize_visom()
 
     def async_initialize(self, agent, sampler_n_itr, batch_spec, mid_batch_reset,
             examples, world_size=1):
@@ -150,14 +150,17 @@ class GP_Mlp(RlAlgorithm):
 
             self.update_counter += 1
             if self.update_counter % self.policy_update_interval == 0:
-                self.mu_optimizer.zero_grad()
-                mu_loss = self.mu_loss(samples_from_buffer, valid)
-                mu_loss.backward()
-                mu_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    self.agent.mu_parameters(), self.clip_grad_norm)
-                self.mu_optimizer.step()
-                opt_info.muLoss.append(mu_loss.item())
-                opt_info.muGradNorm.append(mu_grad_norm)
+                optimizing_policy_iter = 20
+                for _ in range(optimizing_policy_iter):
+                    self.mu_optimizer.zero_grad()
+                    mu_loss = self.mu_loss(samples_from_buffer, valid)
+                    mu_loss.backward()
+                    mu_grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.agent.mu_parameters(), self.clip_grad_norm)
+                    self.mu_optimizer.step()
+                    opt_info.muLoss.append(mu_loss.item())
+                    opt_info.muGradNorm.append(mu_grad_norm)
+
             if self.update_counter % self.target_update_interval == 0:
                 self.agent.update_target(self.target_update_tau)
         return opt_info
@@ -181,6 +184,8 @@ class GP_Mlp(RlAlgorithm):
         T = 40 if n_samples > 40 else n_samples
         mu_loss = 0
         n_obs_dim = samples.observation.size(-1)
+        # Debug multi-step
+        #######################################################
         # for dim in range(n_obs_dim):
         #     self.plotter.plot('dim='+str(dim), 'true',
         #                       'Model Multi-Step Prediction dim='+str(dim),
@@ -188,6 +193,7 @@ class GP_Mlp(RlAlgorithm):
         #                       samples.observation[-T:, 0, dim].data.numpy(), update='replace')
         #     self.plotter.plot('dim='+str(dim), 'predict',
         #                       'Model Multi-Step Prediction dim='+str(dim), [0], [0], update='replace')
+        #######################################################
         next_obs = samples.prev_observation[-T, :, :]
         prev_action = samples.action[0, :, :]
         prev_reward = samples.reward[0, :]
@@ -196,9 +202,11 @@ class GP_Mlp(RlAlgorithm):
                 next_obs, prev_action, prev_reward)
             mu_loss += self.obs_cost_fn(next_obs)
 
+            #######################################################
             # for dim in range(n_obs_dim):
             #     self.plotter.plot('dim='+str(dim), 'predict',
             #                       'Model Multi-Step Prediction dim='+str(dim), [t], next_obs[:, dim].data.numpy(), update='append')
+            #######################################################
 
         return mu_loss
 
@@ -220,19 +228,18 @@ class GP_Mlp(RlAlgorithm):
         d_loss = valid_mean(d_losses, valid)
 
         #debug one-step prediction
-
-        n_samples = samples.observation.size(0)
-        T = 40 if n_samples > 40 else n_samples
-        n_obs_dim = samples.observation.size(-1)
-        for dim in range(n_obs_dim):
-            self.plotter.plot('dim='+str(dim), 'true',
-                              'Model Multi-Step Prediction dim='+str(dim),
-                              range(T),
-                              samples.observation[-T:, 0, dim].data.numpy(), update='replace')
-            self.plotter.plot('dim='+str(dim), 'predict',
-                              'Model Multi-Step Prediction dim='+str(dim),
-                              range(T),
-                              samples.prev_observation[-T:, 0, dim].data.numpy() + pred_obs_delta.mean[-T:, dim].data.numpy(), update='replace')
+        # n_samples = samples.observation.size(0)
+        # T = 40 if n_samples > 40 else n_samples
+        # n_obs_dim = samples.observation.size(-1)
+        # for dim in range(n_obs_dim):
+        #     self.plotter.plot('dim='+str(dim), 'true',
+        #                       'Model Multi-Step Prediction dim='+str(dim),
+        #                       range(T),
+        #                       samples.observation[-T:, 0, dim].data.numpy(), update='replace')
+        #     self.plotter.plot('dim='+str(dim), 'predict',
+        #                       'Model Multi-Step Prediction dim='+str(dim),
+        #                       range(T),
+        #                       samples.prev_observation[-T:, 0, dim].data.numpy() + pred_obs_delta.mean[-T:, dim].data.numpy(), update='replace')
 
         return d_loss
 

@@ -30,12 +30,12 @@ class GP_MlpAgent(BaseAgent):
             d_model_kwargs=None,
             initial_model_state_dict=None,  # Mu model.
             initial_d_model_state_dict=None,
-            action_std=0.1,
+            action_std=0.01,
             action_noise_clip=None,
             ):
         """Saves input arguments; default network sizes saved here."""
         if model_kwargs is None:
-            model_kwargs = dict(hidden_sizes=[50, 40])
+            model_kwargs = dict(hidden_sizes=[20])
         if d_model_kwargs is None:
             d_model_kwargs = dict(num_inducing_pts=50)
         save__init__args(locals())

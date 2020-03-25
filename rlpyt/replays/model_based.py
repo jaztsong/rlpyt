@@ -56,6 +56,6 @@ class ModelBasedBuffer(BaseReplayBuffer):
         leading dimensions ``[batch_T, batch_B]``.
         """
         if self.t > batch_T:
-            return torchify_buffer(self.samples[:-batch_T]) 
+            return torchify_buffer(self.samples[-int(batch_T):]) 
         else:
             return torchify_buffer(self.samples[:self.t+1])
