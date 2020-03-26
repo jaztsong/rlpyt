@@ -3,7 +3,7 @@ channels:
 - pytorch
 dependencies:
 - python=3.7
-- pytorch=1.2
+- pytorch
 - cudatoolkit=10.
 - numpy
 - psutil
@@ -12,3 +12,8 @@ dependencies:
 - pip:
   - atari-py
   - pyprind  # progbar.
+  - visdom
+  - gym
+  - pybullet
+  - gpytorch
+

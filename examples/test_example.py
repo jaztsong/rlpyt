@@ -62,7 +62,7 @@ if __name__ == "__main__":
     parser.add_argument('--env_id', help='environment ID',
                         default='InvertedPendulumBulletEnv-v0')
     parser.add_argument('--run_ID', help='run identifier (logging)', type=int, default=0)
-    parser.add_argument('--cuda_idx', help='gpu to use ', type=int, default=None)
+    parser.add_argument('--cuda_idx', help='gpu to use ', type=int, default=0)
     args = parser.parse_args()
     build_and_train(
         env_id=args.env_id,

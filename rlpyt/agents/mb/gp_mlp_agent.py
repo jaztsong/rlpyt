@@ -65,7 +65,8 @@ class GP_MlpAgent(BaseAgent):
     def to_device(self, cuda_idx=None):
         super().to_device(cuda_idx)  # Takes care of self.model.
         self.target_model.to(self.device)
-        self.d_model.to(self.device)
+        self.d_model.gp.to(self.device)
+        self.d_model.likelihood.to(self.device)
 
     def data_parallel(self):
         super().data_parallel()  # Takes care of self.model.
@@ -86,6 +87,8 @@ class GP_MlpAgent(BaseAgent):
         model_inputs = buffer_to((observation, prev_action, prev_reward,
             action), device=self.device)
         predict_obs_delta = self.d_model.predict_for_train(*model_inputs)
+        # FIXME:
+        # iterate the attributes by using dir() and find the one including device option
         return predict_obs_delta
 
     def predict_next_obs_at_mu(self, observation, prev_action, prev_reward):
