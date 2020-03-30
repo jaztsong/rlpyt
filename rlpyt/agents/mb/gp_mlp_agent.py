@@ -35,7 +35,7 @@ class GP_MlpAgent(BaseAgent):
             ):
         """Saves input arguments; default network sizes saved here."""
         if model_kwargs is None:
-            model_kwargs = dict(hidden_sizes=[20])
+            model_kwargs = dict(hidden_sizes=[20], output_max=1)
         if d_model_kwargs is None:
             d_model_kwargs = dict(num_inducing_pts=50)
         save__init__args(locals())
@@ -65,8 +65,7 @@ class GP_MlpAgent(BaseAgent):
     def to_device(self, cuda_idx=None):
         super().to_device(cuda_idx)  # Takes care of self.model.
         self.target_model.to(self.device)
-        self.d_model.gp.to(self.device)
-        self.d_model.likelihood.to(self.device)
+        self.d_model.to(self.device)
 
     def data_parallel(self):
         super().data_parallel()  # Takes care of self.model.
@@ -86,9 +85,10 @@ class GP_MlpAgent(BaseAgent):
         """Compute the next state for input state/observation and action (with grad)."""
         model_inputs = buffer_to((observation, prev_action, prev_reward,
             action), device=self.device)
-        predict_obs_delta = self.d_model.predict_for_train(*model_inputs)
-        # FIXME:
-        # iterate the attributes by using dir() and find the one including device option
+        predict_obs_delta = self.d_model(*model_inputs, train=True)
+        # Warning: Ideally, the output of the agent should always be on cpu.
+        # But due to the complexity to migrate the GP output from gpu to cpu,
+        # I decide to just leave it on device and defer to data sync in algo
         return predict_obs_delta
 
     def predict_next_obs_at_mu(self, observation, prev_action, prev_reward):
@@ -98,7 +98,7 @@ class GP_MlpAgent(BaseAgent):
             device=self.device)
         mu = self.model(*model_inputs)
         next_obs = self.d_model(
-            *model_inputs, mu) + observation
+            *model_inputs, mu) + model_inputs[0] # model_inputs[0] is the observation
         return next_obs.cpu()
 
     @torch.no_grad()
@@ -117,6 +117,7 @@ class GP_MlpAgent(BaseAgent):
         update_state_dict(self.target_model, self.model.state_dict(), tau)
 
     def d_parameters(self):
+        # FIXME: What should be the parameters: gp + likelihood
         return self.d_model.parameters()
 
     def mu_parameters(self):

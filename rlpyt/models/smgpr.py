@@ -9,7 +9,7 @@ class MultitaskGPModel(gpytorch.models.ApproximateGP):
         # We have to mark the CholeskyVariationalDistribution as batch
         # so that we learn a variational distribution for each task
         self._output_size = output_size
-        inducing_points = torch.rand(output_size,num_inducing_pts, input_size)
+        inducing_points = torch.rand(output_size, num_inducing_pts, input_size)
         variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(
             inducing_points.size(-2), batch_shape=torch.Size([output_size])
         )

@@ -1,6 +1,8 @@
 import torch
 from collections import namedtuple
 
+from gpytorch.mlls import VariationalELBO
+
 from rlpyt.algos.base import RlAlgorithm
 from rlpyt.utils.quick_args import save__init__args
 from rlpyt.utils.logging import logger
@@ -63,7 +65,7 @@ class GP_Mlp(RlAlgorithm):
         # Agent give min itr learn.?
         self.optim_initialize(rank)
         self.initialize_buffer(examples,batch_spec)
-        # self.initialize_visom()
+        self.initialize_visom()
 
     def async_initialize(self, agent, sampler_n_itr, batch_spec, mid_batch_reset,
             examples, world_size=1):
@@ -127,6 +129,7 @@ class GP_Mlp(RlAlgorithm):
         opt_info = OptInfo(*([] for _ in range(len(OptInfo._fields))))
         if itr < self.min_itr_learn:
             return opt_info
+
         for _ in range(self.updates_per_optimize):
             samples_from_buffer = self.buffer.sample_batch(self.batch_size)
             if self.mid_batch_reset and not self.agent.recurrent:
@@ -138,6 +141,7 @@ class GP_Mlp(RlAlgorithm):
                 # time-limit, turn off training on these samples.
                 valid *= 1 - samples_from_buffer.timeout.float()
             optimizing_model_iter = 20
+            self.set_requires_grad(self.agent.d_model, True)
             for _ in range(optimizing_model_iter):
                 self.d_optimizer.zero_grad()
                 d_loss = self.d_loss(samples_from_buffer, valid)
@@ -148,7 +152,7 @@ class GP_Mlp(RlAlgorithm):
                 opt_info.dLoss.append(d_loss.item())
                 opt_info.dGradNorm.append(d_grad_norm)
 
-            self.update_counter += 1
+            self.set_requires_grad(self.agent.d_model, False)
             if self.update_counter % self.policy_update_interval == 0:
                 optimizing_policy_iter = 20
                 for _ in range(optimizing_policy_iter):
@@ -163,6 +167,8 @@ class GP_Mlp(RlAlgorithm):
 
             if self.update_counter % self.target_update_interval == 0:
                 self.agent.update_target(self.target_update_tau)
+
+            self.update_counter += 1
         return opt_info
 
 
@@ -186,26 +192,33 @@ class GP_Mlp(RlAlgorithm):
         n_obs_dim = samples.observation.size(-1)
         # Debug multi-step
         #######################################################
-        # for dim in range(n_obs_dim):
-        #     self.plotter.plot('dim='+str(dim), 'true',
-        #                       'Model Multi-Step Prediction dim='+str(dim),
-        #                       range(T),
-        #                       samples.observation[-T:, 0, dim].data.numpy(), update='replace')
-        #     self.plotter.plot('dim='+str(dim), 'predict',
-        #                       'Model Multi-Step Prediction dim='+str(dim), [0], [0], update='replace')
+        if self.update_counter % (5 * self.policy_update_interval) == 0:
+            for dim in range(n_obs_dim):
+                self.plotter.plot('multi_dim='+str(dim), 'true',
+                                'Model Multi-Step Prediction dim='+str(dim),
+                                range(T),
+                                samples.observation[-T:, 0, dim].data.cpu().numpy(), update='replace')
+                self.plotter.plot('multi_dim='+str(dim), 'predict',
+                                'Model Multi-Step Prediction dim='+str(dim), [0], [0], update='remove')
         #######################################################
-        next_obs = samples.prev_observation[-T, :, :]
+        prev_obs = samples.prev_observation[-T:, :, :]
+        done = samples.done[-T:, :].squeeze(-1)
         prev_action = samples.action[0, :, :]
         prev_reward = samples.reward[0, :]
+        next_obs = prev_obs[0]
         for t in range(T):
-            next_obs = self.agent.predict_next_obs_at_mu(
-                next_obs, prev_action, prev_reward)
             mu_loss += self.obs_cost_fn(next_obs)
+            if t > 0 and done[t - 1]:
+                next_obs = prev_obs[t]
+            else:
+                next_obs = self.agent.predict_next_obs_at_mu(
+                    next_obs, prev_action, prev_reward)
 
             #######################################################
-            # for dim in range(n_obs_dim):
-            #     self.plotter.plot('dim='+str(dim), 'predict',
-            #                       'Model Multi-Step Prediction dim='+str(dim), [t], next_obs[:, dim].data.numpy(), update='append')
+            if self.update_counter % (5 * self.policy_update_interval) == 0:
+                for dim in range(n_obs_dim):
+                    self.plotter.plot('multi_dim='+str(dim), 'predict',
+                                    'Model Multi-Step Prediction dim='+str(dim), [t], next_obs[:, dim].data.cpu().numpy(), update='append')
             #######################################################
 
         return mu_loss
@@ -224,22 +237,28 @@ class GP_Mlp(RlAlgorithm):
         obs_delta = samples.observation - samples.prev_observation
         # next_obs = torch.clamp(
         #     next_obs, -samples.env.observation_space.high, samples.env.observation_space.high)
-        d_losses = -self.agent.d_model.mml(pred_obs_delta, obs_delta)
-        d_loss = valid_mean(d_losses, valid)
+        mml = VariationalELBO(
+            self.agent.d_model.likelihood, self.agent.d_model.gp, num_data=obs_delta.size(0))
+        # An ugly hack to make GP on cuda works
+        if self.agent.device.type != 'cpu':
+            obs_delta = obs_delta.to(self.agent.device)
+        d_losses = -mml(pred_obs_delta, obs_delta)
+        d_loss = valid_mean(d_losses.cpu(), valid)
 
         #debug one-step prediction
-        # n_samples = samples.observation.size(0)
-        # T = 40 if n_samples > 40 else n_samples
-        # n_obs_dim = samples.observation.size(-1)
-        # for dim in range(n_obs_dim):
-        #     self.plotter.plot('dim='+str(dim), 'true',
-        #                       'Model Multi-Step Prediction dim='+str(dim),
-        #                       range(T),
-        #                       samples.observation[-T:, 0, dim].data.numpy(), update='replace')
-        #     self.plotter.plot('dim='+str(dim), 'predict',
-        #                       'Model Multi-Step Prediction dim='+str(dim),
-        #                       range(T),
-        #                       samples.prev_observation[-T:, 0, dim].data.numpy() + pred_obs_delta.mean[-T:, dim].data.numpy(), update='replace')
+        if self.update_counter % (5 * self.policy_update_interval) == 0:
+            n_samples = samples.observation.size(0)
+            T = 40 if n_samples > 40 else n_samples
+            n_obs_dim = samples.observation.size(-1)
+            for dim in range(n_obs_dim):
+                self.plotter.plot('dim='+str(dim), 'true',
+                                'Model One-Step Prediction dim='+str(dim),
+                                range(T),
+                                samples.observation[-T:, 0, dim].data.numpy(), update='replace')
+                self.plotter.plot('dim='+str(dim), 'predict',
+                                'Model One-Step Prediction dim='+str(dim),
+                                range(T),
+                                samples.prev_observation[-T:, 0, dim].data.cpu().numpy() + pred_obs_delta.mean[-T:, dim].data.cpu().numpy(), update='replace')
 
         return d_loss
 
@@ -250,3 +269,16 @@ class GP_Mlp(RlAlgorithm):
     def load_optim_state_dict(self, state_dict):
         self.d_optimizer.load_state_dict(state_dict["d"])
         self.mu_optimizer.load_state_dict(state_dict["mu"])
+
+    def set_requires_grad(self, nets, requires_grad=False):
+        """Set requies_grad=Fasle for all the networks to avoid unnecessary computations
+        Parameters:
+            nets (network list)   -- a list of networks
+            requires_grad (bool)  -- whether the networks require gradients or not
+        """
+        if not isinstance(nets, list):
+            nets = [nets]
+        for net in nets:
+            if net is not None:
+                for param in net.parameters():
+                    param.requires_grad = requires_grad
