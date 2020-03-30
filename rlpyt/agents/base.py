@@ -1,5 +1,6 @@
 import multiprocessing as mp
 import torch
+from os import path
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.nn.parallel import DistributedDataParallelCPU as DDPC
 
@@ -60,6 +61,16 @@ class BaseAgent:
         """Returns values from model forward pass on training data (i.e. used
         in algorithm)."""
         raise NotImplementedError
+
+    def save_mode(self):
+        torch.save(self.model.state_dict(), "mod.pth")
+        print("---------------- Model Saved ----------------")
+
+    def load_mode(self):
+        if path.exists("mod.pth"):
+            self.model.load_state_dict(torch.load("mod.pth"))
+            self.model.eval()
+            print("---------------- Model Loaded ----------------")
 
     def initialize(self, env_spaces, share_memory=False, **kwargs):
         """

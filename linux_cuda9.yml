@@ -12,3 +12,8 @@ dependencies:
 - pip:
   - atari-py
   - pyprind  # progbar.
+  - visdom
+  - gym
+  - pybullet
+  - gpytorch
+

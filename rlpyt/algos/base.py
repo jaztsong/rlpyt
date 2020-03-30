@@ -1,3 +1,5 @@
+import torch
+from os import path
 
 
 class RlAlgorithm:
@@ -57,6 +59,15 @@ class RlAlgorithm:
         """Return the optimizer state dict (e.g. Adam); overwrite if using
         multiple optimizers."""
         return self.optimizer.state_dict()
+
+    def save_mode(self):
+        torch.save(self.optimizer.state_dict(), "opt.pth")
+        print("---------------- Optimizer Saved ----------------")
+
+    def load_mode(self):
+        if path.exists("opt.pth"):
+            self.optimizer.load_state_dict(torch.load("opt.pth"))
+        print("---------------- Optimizer Loaded ----------------")
 
     def load_optim_state_dict(self, state_dict):
         """Load an optimizer state dict; should expect the format returned
