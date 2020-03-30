@@ -62,15 +62,15 @@ class BaseAgent:
         in algorithm)."""
         raise NotImplementedError
 
-    def save_mode(self):
-        torch.save(self.model.state_dict(), "mod.pth")
-        print("---------------- Model Saved ----------------")
-
-    def load_mode(self):
-        if path.exists("mod.pth"):
-            self.model.load_state_dict(torch.load("mod.pth"))
-            self.model.eval()
-            print("---------------- Model Loaded ----------------")
+    # def save_mode(self):
+    #     torch.save(self.model.state_dict(), "mod.pth")
+    #     print("---------------- Model Saved ----------------")
+    #
+    # def load_mode(self, p):
+    #     if path.exists(p):
+    #         self.model.load_state_dict(torch.load(p)["model"])
+    #         print("---------------- Model Loaded ----------------")
+    #         self.model.eval()
 
     def initialize(self, env_spaces, share_memory=False, **kwargs):
         """

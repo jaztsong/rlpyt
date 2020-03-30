@@ -60,19 +60,19 @@ class RlAlgorithm:
         multiple optimizers."""
         return self.optimizer.state_dict()
 
-    def save_mode(self):
-        torch.save(self.optimizer.state_dict(), "opt.pth")
-        print("---------------- Optimizer Saved ----------------")
-
-    def load_mode(self):
-        if path.exists("opt.pth"):
-            self.optimizer.load_state_dict(torch.load("opt.pth"))
-        print("---------------- Optimizer Loaded ----------------")
-
     def load_optim_state_dict(self, state_dict):
         """Load an optimizer state dict; should expect the format returned
         from ``optim_state_dict().``"""
         self.optimizer.load_state_dict(state_dict)
+
+    # def save_mode(self):
+    #     torch.save(self.optimizer.state_dict(), "opt.pth")
+    #     print("---------------- Optimizer Saved ----------------")
+    #
+    # def load_mode(self, p):
+    #     if path.exists(p):
+    #         self.optimizer.load_state_dict(torch.load(p))
+    #     print("---------------- Optimizer Loaded ----------------")
 
     @property
     def batch_size(self):

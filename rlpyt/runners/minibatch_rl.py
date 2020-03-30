@@ -1,3 +1,4 @@
+from os import path
 
 import psutil
 import time
@@ -298,11 +299,10 @@ class MinibatchRlEval(MinibatchRlBase):
         specified log interval.
         """
         n_itr = self.startup()
+        self.load_mode()
         with logger.prefix(f"itr #0 "):
             eval_traj_infos, eval_time = self.evaluate_agent(0)
             self.log_diagnostics(0, eval_traj_infos, eval_time)
-        self.agent.load_mode()
-        self.algo.load_mode()
         for itr in range(n_itr):
             logger.set_iteration(itr)
             with logger.prefix(f"itr #{itr} "):
@@ -314,9 +314,22 @@ class MinibatchRlEval(MinibatchRlBase):
                 if (itr + 1) % self.log_interval_itrs == 0:
                     eval_traj_infos, eval_time = self.evaluate_agent(itr)
                     self.log_diagnostics(itr, eval_traj_infos, eval_time)
-                    self.agent.save_mode()
-                    self.algo.save_mode()
+                    self.save_mode()
         self.shutdown()
+
+    def load_mode(self):
+        if path.exists("mod.pth"):
+            self.agent.load_state_dict(torch.load("mod.pth"))
+            print("---------------- Model Loaded ----------------")
+        if path.exists("opt.pth"):
+            self.algo.load_optim_state_dict(torch.load("opt.pth"))
+            print("---------------- Optimizer Loaded ----------------")
+
+    def save_mode(self):
+        torch.save(self.agent.state_dict(), "mod.pth")
+        print("---------------- Model Saved ----------------")
+        torch.save(self.algo.optim_state_dict(), "opt.pth")
+        print("---------------- Optimizer Saved ----------------")
 
     def evaluate_agent(self, itr):
         """

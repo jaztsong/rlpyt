@@ -110,11 +110,11 @@ class EpsilonGreedyAgentMixin:
                     f" (min itr: {itr_min}, max_itr: {itr_max})")
         self.distribution.set_epsilon(self.eps_sample)
 
-    def save_mode(self):
-        super().save_mode()
+    # def save_mode(self):
+    #     super().save_mode()
 
-    def load_mode(self):
-        super().load_mode()
+    def load_mode(self, path):
+        super().load_mode(path)
 
     # def sample_mode(self, itr):
     #     super().sample_mode(itr)

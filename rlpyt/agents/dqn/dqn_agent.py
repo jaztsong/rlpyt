@@ -1,3 +1,4 @@
+from os import path
 
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -28,6 +29,19 @@ class DqnAgent(EpsilonGreedyAgentMixin, BaseAgent):
         q = self.model(*model_inputs)
         return q.cpu()
 
+    # def save_mode(self):
+    #     torch.save(self.model.state_dict(), "mod.pth")
+    #     print("---------------- Model Saved ----------------")
+    #
+    # def load_mode(self, p):
+    #     if path.exists(p):
+    #         self.model.load_state_dict(torch.load(p)["model"])
+    #         print("---------------- Model Loaded ----------------")
+    #         self.target_model.load_state_dict(torch.load(p)["target"])
+    #         print("---------------- Target Loaded ----------------")
+    #         self.target_model.eval()
+    #         self.model.eval()
+
     def initialize(self, env_spaces, share_memory=False,
             global_B=1, env_ranks=None):
         """Along with standard initialization, creates vector-valued epsilon
@@ -49,6 +63,14 @@ class DqnAgent(EpsilonGreedyAgentMixin, BaseAgent):
     def state_dict(self):
         return dict(model=self.model.state_dict(),
             target=self.target_model.state_dict())
+
+    def load_state_dict(self, state_dict):
+        self.model.load_state_dict(state_dict["model"])
+        print("---------------- Base Loaded ----------------")
+        self.target_model.load_state_dict(state_dict["target"])
+        print("---------------- Target Loaded ----------------")
+        self.target_model.eval()
+        self.model.eval()
 
     @torch.no_grad()
     def step(self, observation, prev_action, prev_reward):
