@@ -66,9 +66,7 @@ class DqnAgent(EpsilonGreedyAgentMixin, BaseAgent):
 
     def load_state_dict(self, state_dict):
         self.model.load_state_dict(state_dict["model"])
-        print("---------------- Base Loaded ----------------")
         self.target_model.load_state_dict(state_dict["target"])
-        print("---------------- Target Loaded ----------------")
         self.target_model.eval()
         self.model.eval()
 

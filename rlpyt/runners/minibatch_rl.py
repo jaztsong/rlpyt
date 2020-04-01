@@ -299,10 +299,10 @@ class MinibatchRlEval(MinibatchRlBase):
         specified log interval.
         """
         n_itr = self.startup()
-        self.load_mode()
         with logger.prefix(f"itr #0 "):
             eval_traj_infos, eval_time = self.evaluate_agent(0)
             self.log_diagnostics(0, eval_traj_infos, eval_time)
+            self.load_mode()
         for itr in range(n_itr):
             logger.set_iteration(itr)
             with logger.prefix(f"itr #{itr} "):
@@ -318,17 +318,21 @@ class MinibatchRlEval(MinibatchRlBase):
         self.shutdown()
 
     def load_mode(self):
-        if path.exists("mod.pth"):
-            self.agent.load_state_dict(torch.load("mod.pth"))
+        pre = path.abspath(path.join(path.dirname(__file__), '../../data'))
+        exp = logger._prefixes[0]
+        if path.exists(pre + '/' + exp + "_mod.pth"):
+            self.agent.load_state_dict(torch.load(pre + '/' + exp + "_mod.pth"))
             print("---------------- Model Loaded ----------------")
-        if path.exists("opt.pth"):
-            self.algo.load_optim_state_dict(torch.load("opt.pth"))
+        if path.exists(pre + '/' + exp + "_opt.pth"):
+            self.algo.load_optim_state_dict(torch.load(pre + '/' + exp + "_opt.pth"))
             print("---------------- Optimizer Loaded ----------------")
 
     def save_mode(self):
-        torch.save(self.agent.state_dict(), "mod.pth")
+        pre = path.abspath(path.join(path.dirname(__file__), '../../data'))
+        exp = logger._prefixes[0]
+        torch.save(self.agent.state_dict(), pre + '/' + exp + "_mod.pth")
         print("---------------- Model Saved ----------------")
-        torch.save(self.algo.optim_state_dict(), "opt.pth")
+        torch.save(self.algo.optim_state_dict(), pre + '/' + exp + "_opt.pth")
         print("---------------- Optimizer Saved ----------------")
 
     def evaluate_agent(self, itr):
