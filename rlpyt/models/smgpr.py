@@ -28,7 +28,8 @@ class MultitaskGPModel(gpytorch.models.ApproximateGP):
         # so we learn a different set of hyperparameters
         self.mean_module = gpytorch.means.ConstantMean(batch_shape=torch.Size([output_size]))
         self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel(batch_shape=torch.Size([output_size])),
+            gpytorch.kernels.RBFKernel(
+                ard_num_dims=input_size, batch_shape=torch.Size([output_size])),
             batch_shape=torch.Size([output_size])
         )
 

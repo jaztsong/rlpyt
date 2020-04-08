@@ -6,10 +6,11 @@ from torch.nn.parallel import DistributedDataParallelCPU as DDPC
 from rlpyt.agents.base import BaseAgent, AgentStep
 from rlpyt.utils.quick_args import save__init__args
 from rlpyt.distributions.gaussian import Gaussian, DistInfo
+from rlpyt.distributions.discrete import DiscreteMixin
 from rlpyt.utils.buffer import buffer_to
 from rlpyt.utils.logging import logger
 from rlpyt.models.qpg.mlp import MuMlpModel
-from rlpyt.models.mb.smgpr import GPDynamicsModel
+from rlpyt.models.mb.mgpr import GPDynamicsModel
 from rlpyt.models.utils import update_state_dict
 from rlpyt.utils.collections import namedarraytuple
 
@@ -30,14 +31,15 @@ class GP_MlpAgent(BaseAgent):
             d_model_kwargs=None,
             initial_model_state_dict=None,  # Mu model.
             initial_d_model_state_dict=None,
-            action_std=0.01,
+            action_std=0.1,
             action_noise_clip=None,
             ):
         """Saves input arguments; default network sizes saved here."""
         if model_kwargs is None:
-            model_kwargs = dict(hidden_sizes=[20], output_max=1)
+            model_kwargs = dict(hidden_sizes=[20])
         if d_model_kwargs is None:
-            d_model_kwargs = dict(num_inducing_pts=50)
+            # d_model_kwargs = dict(num_inducing_pts=100)
+            d_model_kwargs = dict()
         save__init__args(locals())
         super().__init__()  # For async setup.
 
@@ -61,6 +63,7 @@ class GP_MlpAgent(BaseAgent):
             noise_clip=self.action_noise_clip,
             clip=env_spaces.action.high[0],  # Assume symmetric low=-high.
         )
+        # self.distribution = DiscreteMixin(dim=env_spaces.action.n)
 
     def to_device(self, cuda_idx=None):
         super().to_device(cuda_idx)  # Takes care of self.model.
@@ -80,12 +83,15 @@ class GP_MlpAgent(BaseAgent):
             observation_shape=env_spaces.observation.shape,
             action_size=env_spaces.action.shape[0],
         )
+        # # CartPole agent
+        # return dict(observation_shape=env_spaces.observation.shape,
+        #             action_size=env_spaces.action.n)
 
-    def predict_obs_delta(self, observation, prev_action, prev_reward, action):
+    def predict_obs_delta(self, observation, prev_action, prev_reward, action, train=True):
         """Compute the next state for input state/observation and action (with grad)."""
         model_inputs = buffer_to((observation, prev_action, prev_reward,
             action), device=self.device)
-        predict_obs_delta = self.d_model(*model_inputs, train=True)
+        predict_obs_delta = self.d_model(*model_inputs, train=train)
         # Warning: Ideally, the output of the agent should always be on cpu.
         # But due to the complexity to migrate the GP output from gpu to cpu,
         # I decide to just leave it on device and defer to data sync in algo
@@ -109,6 +115,7 @@ class GP_MlpAgent(BaseAgent):
             device=self.device)
         mu = self.model(*model_inputs)
         action = self.distribution.sample(DistInfo(mean=mu))
+        # action = self.distribution.to_onehot(torch.argmax(mu))
         agent_info = AgentInfo(mu=mu)
         action, agent_info = buffer_to((action, agent_info), device="cpu")
         return AgentStep(action=action, agent_info=agent_info)
@@ -130,12 +137,20 @@ class GP_MlpAgent(BaseAgent):
     def sample_mode(self, itr):
         super().sample_mode(itr)
         self.d_model.eval()
-        self.distribution.set_std(self.action_std)
+        # self.distribution.set_std(self.action_std)
 
     def eval_mode(self, itr):
         super().eval_mode(itr)
         self.d_model.eval()
-        self.distribution.set_std(0.)  # Deterministic.
+        # self.distribution.set_std(0.)  # Deterministic.
+    
+    def train_d_model(self):
+        self.d_model.gp.train()
+        self.d_model.likelihood.train()
+
+    def eval_d_model(self):
+        self.d_model.gp.eval()
+        self.d_model.likelihood.eval()
 
     def state_dict(self):
         return dict(
@@ -143,6 +158,16 @@ class GP_MlpAgent(BaseAgent):
             d_model=self.d_model.state_dict(),
             target_model=self.target_model.state_dict(),
         )
+
+    def get_d_model_params(self):
+        lengthscales = self.d_model.gp.covar_module.base_kernel.lengthscale.cpu().detach().numpy().squeeze()
+        variance = self.d_model.gp.covar_module.outputscale.cpu().detach().numpy().squeeze()
+        noise = self.d_model.likelihood.noise.cpu().detach().numpy().squeeze()
+        print('-----Learned models------')
+        print('---Lengthscales---\n',lengthscales)
+        print('---Variances---\n',variance)
+        print('---Noises---\n',noise)
+
 
     def load_state_dict(self, state_dict):
         self.model.load_state_dict(state_dict["model"])

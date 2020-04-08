@@ -50,7 +50,7 @@ def build_and_train(env_id="Hopper-v3", run_ID=0, cuda_idx=None):
     config = dict(env_id=env_id)
     name = "gp_mlp_" + env_id
     log_dir = "example_1"
-    with logger_context(log_dir, run_ID, name, config):
+    with logger_context(log_dir, run_ID, name, config, snapshot_mode='last'):
         runner.train()
 
 

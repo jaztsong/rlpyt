@@ -1,7 +1,7 @@
 import torch
 from collections import namedtuple
 
-from gpytorch.mlls import VariationalELBO
+from gpytorch.mlls import ExactMarginalLogLikelihood
 
 from rlpyt.algos.base import RlAlgorithm
 from rlpyt.utils.quick_args import save__init__args
@@ -28,13 +28,13 @@ class GP_Mlp(RlAlgorithm):
     def __init__(
             self,
             discount=0.99,
-            batch_size=5e2,
+            batch_size=500,
             buffer_size=int(1e6),
             min_steps_learn=int(1e1), # very efficient
-            target_update_tau=0.01,
-            target_update_interval=10,
-            policy_update_interval=10,
-            learning_rate=1e-4,
+            target_update_tau=0.9,
+            target_update_interval=5,
+            policy_update_interval=5,
+            learning_rate=1e-2,
             d_learning_rate=1e-2,
             OptimCls=torch.optim.Adam,
             optim_kwargs=None,
@@ -60,7 +60,7 @@ class GP_Mlp(RlAlgorithm):
         self.n_itr = n_itr
         self.mid_batch_reset = mid_batch_reset
         self.sampler_bs = sampler_bs = batch_spec.size
-        self.updates_per_optimize = 20
+        self.updates_per_optimize = 5
         self.min_itr_learn = int(self.min_steps_learn // sampler_bs)
         # Agent give min itr learn.?
         self.optim_initialize(rank)
@@ -140,19 +140,27 @@ class GP_Mlp(RlAlgorithm):
                 # To avoid non-use of bootstrap when environment is 'done' due to
                 # time-limit, turn off training on these samples.
                 valid *= 1 - samples_from_buffer.timeout.float()
+            
+            # optimize_dynamic_model
             optimizing_model_iter = 20
-            self.set_requires_grad(self.agent.d_model, True)
-            for _ in range(optimizing_model_iter):
+            # self.set_requires_grad(self.agent.d_model, True)
+            self.agent.train_d_model()
+            for itr_ in range(optimizing_model_iter):
                 self.d_optimizer.zero_grad()
-                d_loss = self.d_loss(samples_from_buffer, valid)
+                d_loss = self.d_loss(samples_from_buffer, itr_)
                 d_loss.backward()
                 d_grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.agent.d_parameters(), self.clip_grad_norm)
                 self.d_optimizer.step()
                 opt_info.dLoss.append(d_loss.item())
                 opt_info.dGradNorm.append(d_grad_norm)
+                # print('Iter %d/%d - Loss: %.3f' % (itr_ + 1, optimizing_model_iter, d_loss.item()))
+            
+            # self.agent.get_d_model_params()
 
-            self.set_requires_grad(self.agent.d_model, False)
+            self.update_counter += 1
+            # self.set_requires_grad(self.agent.d_model, False)
+            self.agent.eval_d_model()
             if self.update_counter % self.policy_update_interval == 0:
                 optimizing_policy_iter = 20
                 for _ in range(optimizing_policy_iter):
@@ -168,7 +176,6 @@ class GP_Mlp(RlAlgorithm):
             if self.update_counter % self.target_update_interval == 0:
                 self.agent.update_target(self.target_update_tau)
 
-            self.update_counter += 1
         return opt_info
 
 
@@ -190,9 +197,17 @@ class GP_Mlp(RlAlgorithm):
         T = 40 if n_samples > 40 else n_samples
         mu_loss = 0
         n_obs_dim = samples.observation.size(-1)
+        #debug one-step prediction
+        if self.update_counter % (self.policy_update_interval) == 0:
+            # for dim in range(n_obs_dim):
+            #     self.plotter.plot('dim='+str(dim), 'true',
+            #                     'Model One-Step Prediction dim='+str(dim),
+            #                     range(T),
+            #                     samples.observation[-T:, 0, dim].data.numpy(), update='replace')
+            #     self.plotter.plot('dim='+str(dim), 'predict',
+            #                     'Model One-Step Prediction dim='+str(dim), [0], [0], update='remove')
         # Debug multi-step
         #######################################################
-        if self.update_counter % (5 * self.policy_update_interval) == 0:
             for dim in range(n_obs_dim):
                 self.plotter.plot('multi_dim='+str(dim), 'true',
                                 'Model Multi-Step Prediction dim='+str(dim),
@@ -206,6 +221,7 @@ class GP_Mlp(RlAlgorithm):
         prev_action = samples.action[0, :, :]
         prev_reward = samples.reward[0, :]
         next_obs = prev_obs[0]
+        t_next_obs = prev_obs[0]
         for t in range(T):
             mu_loss += self.obs_cost_fn(next_obs)
             if t > 0 and done[t - 1]:
@@ -213,53 +229,42 @@ class GP_Mlp(RlAlgorithm):
             else:
                 next_obs = self.agent.predict_next_obs_at_mu(
                     next_obs, prev_action, prev_reward)
-
+                # next_obs = self.agent.predict_obs_delta(
+                #     prev_obs[t], prev_action, prev_reward, samples.action[t], train=False).cpu() + prev_obs[t]
+                # print("delta_prediction:", t_next_obs)
+                
             #######################################################
-            if self.update_counter % (5 * self.policy_update_interval) == 0:
+            if self.update_counter % (self.policy_update_interval) == 0:
+                if t > 0 and done[t - 1]:
+                    t_next_obs = prev_obs[t]
+                else:
+                    t_next_obs = self.agent.predict_obs_delta(
+                        t_next_obs, prev_action, prev_reward, samples.action[t], train=False).cpu() + t_next_obs
                 for dim in range(n_obs_dim):
+                    # self.plotter.plot('multi_dim='+str(dim), 'predict',
+                    #                 'Model Multi-Step Prediction dim='+str(dim), [t], next_obs[:, dim].data.cpu().numpy(), update='append')
+                    
                     self.plotter.plot('multi_dim='+str(dim), 'predict',
-                                    'Model Multi-Step Prediction dim='+str(dim), [t], next_obs[:, dim].data.cpu().numpy(), update='append')
+                                      'Model One-Step Prediction dim='+str(dim), [t], t_next_obs[:, dim].data.cpu().numpy(), update='append')
             #######################################################
 
         return mu_loss
 
-    def d_loss(self, samples, valid):
-        """Constructs the prediction loss Input samples have leading batch dimension [B,..] (but not time)."""
-        assert(samples.observation.size(0) > 1)
-        agent_inputs = AgentInputs(
-            observation=samples.prev_observation,
-            prev_action=samples.action,
-            prev_reward=samples.reward,
-        )
-
-        # only predict 1:n-1
-        pred_obs_delta = self.agent.predict_obs_delta(*agent_inputs, samples.action)
+    def d_loss(self, samples, itr):
+        mml = ExactMarginalLogLikelihood(
+            self.agent.d_model.likelihood, self.agent.d_model.gp)
         obs_delta = samples.observation - samples.prev_observation
+        if itr == 0:
+            self.agent.d_model.set_train_data(samples.prev_observation.float().to(
+                self.agent.device), samples.action.float().to(self.agent.device), obs_delta.float().to(self.agent.device))
+            # self.agent.d_model.randomize()
+        pred_obs_delta = self.agent.predict_obs_delta(samples.prev_observation,
+                                                      samples.prev_observation, samples.reward,
+                                                      samples.action)
         # next_obs = torch.clamp(
         #     next_obs, -samples.env.observation_space.high, samples.env.observation_space.high)
-        mml = VariationalELBO(
-            self.agent.d_model.likelihood, self.agent.d_model.gp, num_data=obs_delta.size(0))
-        # An ugly hack to make GP on cuda works
-        if self.agent.device.type != 'cpu':
-            obs_delta = obs_delta.to(self.agent.device)
-        d_losses = -mml(pred_obs_delta, obs_delta)
-        d_loss = valid_mean(d_losses.cpu(), valid)
-
-        #debug one-step prediction
-        if self.update_counter % (5 * self.policy_update_interval) == 0:
-            n_samples = samples.observation.size(0)
-            T = 40 if n_samples > 40 else n_samples
-            n_obs_dim = samples.observation.size(-1)
-            for dim in range(n_obs_dim):
-                self.plotter.plot('dim='+str(dim), 'true',
-                                'Model One-Step Prediction dim='+str(dim),
-                                range(T),
-                                samples.observation[-T:, 0, dim].data.numpy(), update='replace')
-                self.plotter.plot('dim='+str(dim), 'predict',
-                                'Model One-Step Prediction dim='+str(dim),
-                                range(T),
-                                samples.prev_observation[-T:, 0, dim].data.cpu().numpy() + pred_obs_delta.mean[-T:, dim].data.cpu().numpy(), update='replace')
-
+        d_loss = -mml(pred_obs_delta, obs_delta.view(obs_delta.shape[0]*obs_delta.shape[1], -1).cuda())
+        
         return d_loss
 
     def optim_state_dict(self):
